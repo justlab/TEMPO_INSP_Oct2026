@@ -1,0 +1,304 @@
+---
+title: "Curvas concentración-respuesta: NO₂ y visitas a urgencias"
+subtitle: "Taller práctico de epidemiología ambiental con datos TEMPO"
+author: "Material de apoyo para participantes"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+    theme: readable
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      fig.width = 9, fig.height = 6, fig.align = "center")
+```
+
+# Objetivos de aprendizaje
+
+En esta actividad construiremos curvas concentración-respuesta para explorar la asociación entre las columnas troposféricas de NO₂ observadas por TEMPO y las visitas a urgencias por enfermedades respiratorias. 
+
+Al finalizar, podremos:.
+
+(1) Evaluar el ajuste de una función lineal y una no lineal modelada con *splines* naturales 
+(2) Representar gráficamente ambas funciones
+(3) Interpretar la incertidumbre de las curvas 
+
+# Preparación
+
+Este documento supone que el objeto `er_cco_no2_CF1` ya está cargado en la sesión de R. 
+Debe contener, como mínimo, las variables `id`, `caseday`, `broad_category`, `age_cat`, `specific_category` y `satellite.no2_9AM`.
+
+```{r packages}
+library(data.table)
+library(survival)
+library(splines)
+library(ggplot2)
+```
+
+```{r check-data}
+
+# Load the case-crossover dataset with satellite NO2 exposure estimates
+
+er_cco_no2_CF1 <- fst::read_fst(  "../data/cco_no2_er.fst", as.data.table = TRUE)
+
+# Verify that all required variables are available
+
+required_cols <- c("id", "caseday", "broad_category", "age_cat",
+                   "specific_category", "satellite.no2_9AM")
+
+stopifnot(all(required_cols %in% names(er_cco_no2_CF1)))
+
+```
+
+# ¿Cómo construimos una curva concentración-respuesta?
+
+Para una concentración $x$ y una concentración de comparación o de "partida" $x_0$, el OR relativo se expresa como:
+
+$$OR(x, x_0)=\exp\{f(x)-f(x_0)\}.$$
+
+En el modelo lineal, $f(x)=\beta x$; en el modelo con *splines* naturales, $f(x)$ es una combinación de funciones de base que permite cambios en la pendiente. 
+
+La curva tiene $OR=1$ en $x_0$ **por construcción: ese punto no es un umbral de seguridad ni indica ausencia de efectos sobre la salud**.
+
+La función permite elegir el percentil 5 (`ref = "p5"`) o la mediana (`ref = "median"`) como concentración de comparación o "partida". También limita el rango graficado mediante los percentiles 1 y 99, sin excluir esas observaciones del ajuste estadístico.
+
+# Función para ajustar modelos y graficar
+
+La siguiente función realiza lo siguiente:
+
+(1) Ajusta los modelos 
+(2) Calcula los OR relativos (con incrementos relativos al punto de partida) y sus intervalos de confianza puntuales del 95 %, 
+(3) Devuelve tanto la función de forma gráfica como la salida del modelo y los datos de predicción.
+
+
+```{r define-function}
+
+plot_cco_cr <- function(dt, age, outcome,
+                        exposure = "satellite.no2_9AM",
+                        exposure_label = "9 AM NO2",
+                        model = c("linear", "spline"),
+                        df = 3, 
+                        ref = c("p5", "median"),
+                        trim = c(0.01, 0.99),
+                        n_points = 200,
+                        show_rug = FALSE) {
+
+  model <- match.arg(model)
+  ref <- match.arg(ref)
+  dt <- data.table::as.data.table(data.table::copy(dt))
+
+  # Subset respiratory cases and matched controls by age group and outcome,
+  # retaining only observations with non-missing exposure values
+  data <- dt[broad_category == "respiratory" & age_cat == age &
+               specific_category == outcome,
+             .(id, caseday, exposure_value = get(exposure))][!is.na(exposure_value)]
+
+  # Define event status and survival times for the Cox-model implementation
+  data[, `:=`(status = as.numeric(caseday == 0),
+              TimetoEvent = ifelse(caseday == 0, 1, 2))]
+
+  # Define the plotted exposure range and select the comparison concentration
+  q <- stats::quantile(data$exposure_value, c(trim, 0.05, 0.50), na.rm = TRUE)
+  ref_value <- if (ref == "p5") q[3] else q[4]
+  x <- seq(q[1], q[2], length.out = n_points)
+
+  if (model == "linear") {
+
+    # Fit a linear exposure-response model with a single NO2 coefficient
+    fit <- survival::coxph(
+      survival::Surv(TimetoEvent, status) ~ exposure_value + strata(id),
+      data = data, na.action = na.exclude)
+
+    beta <- stats::coef(fit)
+    V <- stats::vcov(fit)
+    X <- matrix(x - ref_value, ncol = 1)
+
+  } else {
+
+    # Fit a natural spline and center its basis at the comparison concentration
+    b <- splines::ns(data$exposure_value, df = df)
+    fit <- survival::coxph(
+      survival::Surv(TimetoEvent, status) ~ b + strata(id),
+      data = data, na.action = na.exclude)
+
+    bx <- predict(b, x)
+    bref <- predict(b, ref_value)
+    X <- sweep(bx, 2, as.numeric(bref), "-")
+
+    beta <- stats::coef(fit)
+    V <- stats::vcov(fit)
+  }
+
+  # Calculate relative log odds ratios and pointwise 95% confidence intervals
+  logOR <- as.vector(X %*% beta)
+  se <- sqrt(rowSums((X %*% V) * X))
+  pred <- data.table::data.table(
+    NO2 = x, OR = exp(logOR),
+    LL = exp(logOR - 1.96 * se), UL = exp(logOR + 1.96 * se))
+
+  # Plot the concentration-response curve and confidence band
+  p <- ggplot2::ggplot(pred, ggplot2::aes(NO2, OR)) +
+    ggplot2::geom_ribbon(ggplot2::aes(ymin = LL, ymax = UL),
+                         fill = "#D98B73", alpha = 0.25) +
+    ggplot2::geom_line(color = "#A34732", linewidth = 1) +
+    ggplot2::geom_hline(yintercept = 1, linetype = "dashed", linewidth = 0.5) +
+    ggplot2::labs(
+      x = expression("TEMPO tropospheric NO"[2]*" column ("*mu*"mol/m"^2*")"),
+      y = "Odds Ratio",
+      title = paste0(outcome, " — ", tools::toTitleCase(age)),
+      subtitle = paste0(exposure_label, " | ", model,
+                        " model | OR = 1 at ", ref, " (",
+                        round(ref_value, 1), " \u03bcmol/m\u00b2)")) +
+    ggplot2::theme_classic(base_size = 16) +
+    ggplot2::theme(
+      plot.title = ggplot2::element_text(size = 20, face = "bold"),
+      plot.subtitle = ggplot2::element_text(size = 16),
+      axis.title = ggplot2::element_text(size = 18),
+      axis.text = ggplot2::element_text(size = 15))
+
+  # Optionally display individual exposure observations along the x-axis
+  if (show_rug) {
+    p <- p + ggplot2::geom_rug(
+      data = data, ggplot2::aes(x = exposure_value),
+      inherit.aes = FALSE, sides = "b", alpha = 0.08)
+  }
+
+  # Return the figure, model, predictions, and number of unique matched sets
+  list(plot = p, model = fit, predictions = pred,
+       reference = ref_value, N = data.table::uniqueN(data$id))
+}
+```
+
+# Ejemplo 1. Influenza y neumonía en niños
+
+Ajustamos dos modelos sobre el mismo grupo de edad y diagnóstico. La diferencia es la forma funcional de la exposición: una recta en la escala de log-OR frente a una función flexible con tres grados de libertad.
+
+```{r influenza-models}
+flu_linear <- plot_cco_cr(er_cco_no2_CF1,
+                          age = "children",
+                          outcome = "Influenza and pneumonia (J09–J18)",
+                          model = "linear", ref = "p5")
+
+flu_spline <- plot_cco_cr(er_cco_no2_CF1,
+                          age = "children",
+                          outcome = "Influenza and pneumonia (J09–J18)",
+                          model = "spline", df = 3, ref = "p5")
+```
+
+## Modelo lineal
+
+```{r influenza-linear-plot}
+flu_linear$plot
+```
+
+## Modelo con spline natural
+
+```{r influenza-spline-plot}
+flu_spline$plot
+```
+
+### Guía de interpretación
+
+- La línea solida representa el OR estimado respecto a la concentración elegida.
+- La banda sombreada representa el intervalo de confianza puntual del 95 %.
+- La línea horizontal discontinua marca $OR=1$.
+- El punto donde $OR=1$ se fija por construcción, no constituye un umbral de efecto.
+- Los coeficientes individuales de la base spline **no** son OR por unidad de NO₂. Interpretamos contrastes entre concentraciones a partir de la función completa.
+
+# ¿Cuál modelo se ajusta mejor?
+
+Antes de comparar AIC, log-likelihood o realizar una prueba de razón de verosimilitudes (LRT), debemos verificar que ambos modelos se hayan estimado sobre las mismas observaciones y conjuntos emparejados. En estos ejemplos, ambos modelos se generan con el mismo filtro de datos.
+
+```{r influenza-comparison}
+# 1. Lower AIC indicates a better balance of fit and model complexity
+AIC(flu_linear$model, flu_spline$model)
+
+# 2. Verify the number of observations used in each model
+c(linear = flu_linear$model$n,
+  spline = flu_spline$model$n)
+
+# 3. Higher log-likelihood indicates better raw fit, without complexity penalty
+c(linear = as.numeric(logLik(flu_linear$model)),
+  spline = as.numeric(logLik(flu_spline$model)))
+
+# 4. LRT: H0 = linear exposure-response; H1 = spline improves fit
+anova(flu_linear$model, flu_spline$model, test = "LRT")
+```
+
+El AIC más bajo favorece un balance entre ajuste y complejidad. El log-likelihood más alto (menos negativo) indica mejor ajuste bruto, pero no penaliza parámetros adicionales. La LRT evalúa si los términos adicionales del spline mejoran el ajuste respecto al modelo lineal; un valor p pequeño proporciona evidencia de no linealidad bajo los supuestos del contraste.
+
+# Ejemplo 2. Asma en adultos mayores
+
+Repetimos el mismo procedimiento para otro diagnóstico y grupo de edad. Observa que `ref = "p5"` es el valor predeterminado, por lo que podemos omitirlo.
+
+```{r asthma-models}
+asthma_linear <- plot_cco_cr(er_cco_no2_CF1,
+                             age = "elderly", outcome = "Asthma (J45)",
+                             model = "linear")
+asthma_spline <- plot_cco_cr(er_cco_no2_CF1,
+                             age = "elderly", outcome = "Asthma (J45)",
+                             model = "spline", df = 3)
+```
+
+```{r asthma-linear-plot}
+asthma_linear$plot
+```
+
+```{r asthma-spline-plot}
+asthma_spline$plot
+```
+
+```{r asthma-comparison}
+AIC(asthma_linear$model, asthma_spline$model)
+c(linear = asthma_linear$model$n,
+  spline = asthma_spline$model$n)
+c(linear = as.numeric(logLik(asthma_linear$model)),
+  spline = as.numeric(logLik(asthma_spline$model)))
+anova(asthma_linear$model, asthma_spline$model, test = "LRT")
+```
+
+# Ejemplo 3. Infecciones respiratorias superiores en niños
+
+```{r uri-models}
+uri_linear <- plot_cco_cr(er_cco_no2_CF1,
+                          age = "children",
+                          outcome = "Acute upper respiratory infections (J00–J06)",
+                          model = "linear")
+uri_spline <- plot_cco_cr(er_cco_no2_CF1,
+                          age = "children",
+                          outcome = "Acute upper respiratory infections (J00–J06)",
+                          model = "spline", df = 3)
+```
+
+```{r uri-linear-plot}
+uri_linear$plot
+```
+
+```{r uri-spline-plot}
+uri_spline$plot
+```
+
+```{r uri-comparison}
+AIC(uri_linear$model, uri_spline$model)
+c(linear = uri_linear$model$n,
+  spline = uri_spline$model$n)
+c(linear = as.numeric(logLik(uri_linear$model)),
+  spline = as.numeric(logLik(uri_spline$model)))
+anova(uri_linear$model, uri_spline$model, test = "LRT")
+```
+
+# Ejercicios para participantes
+
+1. Cambia `ref = "p5"` por `ref = "median"` en el ejemplo de influenza y neumonía. ¿Qué cambia en el gráfico? ¿Cambian los coeficientes del modelo?
+2. Cambia `df = 3` por `df = 2` en el spline. ¿Cómo cambia la forma de la curva? ¿Qué ocurre con el AIC?
+3. Activa `show_rug = TRUE`. ¿Qué información adicional aporta la distribución de las observaciones de exposición? ¿Cuánto tarda en renderizarse?
+
+# Consideraciones metodológicas
+
+- Los intervalos mostrados son **puntuales**, no bandas de confianza simultáneas para toda la curva.
+- Un spline permite asociaciones no lineales, pero una curva visualmente curvada no demuestra por sí sola no linealidad estadística.
+- La incertidumbre puede aumentar en concentraciones con poca información y cuando el contraste se aleja de la concentración de comparación.
+- La comparación formal entre modelos requiere la misma muestra analítica y modelos anidados estimados de forma compatible.

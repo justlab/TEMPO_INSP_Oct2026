@@ -1,5 +1,5 @@
 ---
-title: "Curvas concentración-respuesta: NO₂ y visitas a urgencias"
+title: "Análisis NO₂ y visitas a urgencias"
 subtitle: "Taller práctico de epidemiología ambiental con datos TEMPO"
 author: "Material de apoyo para participantes"
 output:
@@ -59,9 +59,22 @@ Para una concentración $x$ y una concentración de comparación o de "partida" 
 
 $$OR(x, x_0)=\exp\{f(x)-f(x_0)\}.$$
 
-En el modelo lineal, $f(x)=\beta x$; en el modelo con *splines* naturales, $f(x)$ es una combinación de funciones de base que permite cambios en la pendiente. 
+En el modelo lineal, 
+$$f(x)=\beta x$$ 
 
-La curva tiene $OR=1$ en $x_0$ **por construcción: ese punto no es un umbral de seguridad ni indica ausencia de efectos sobre la salud**.
+en el modelo con *splines* naturales, 
+$$f(x)$$
+es una combinación de funciones de base que permite cambios en la pendiente. 
+
+
+**Por construcción** la curva tiene
+
+$$OR=1$$
+en
+
+$$x_0$$
+
+es decir; **ese punto no es un umbral de seguridad ni indica ausencia de efectos sobre la salud**.
 
 La función permite elegir el percentil 5 (`ref = "p5"`) o la mediana (`ref = "median"`) como concentración de comparación o "partida". También limita el rango graficado mediante los percentiles 1 y 99, sin excluir esas observaciones del ajuste estadístico.
 
@@ -205,7 +218,7 @@ flu_spline$plot
 - La línea solida representa el OR estimado respecto a la concentración elegida.
 - La banda sombreada representa el intervalo de confianza puntual del 95 %.
 - La línea horizontal discontinua marca $OR=1$.
-- El punto donde $OR=1$ se fija por construcción, no constituye un umbral de efecto.
+- El punto donde $OR=1$ se fija por construcción, no constituye un umbral de efecto (equivale a un incremento de 0 unidades en la exposición con relacion al punto de partida seleccionado).
 - Los coeficientes individuales de la base spline **no** son OR por unidad de NO₂. Interpretamos contrastes entre concentraciones a partir de la función completa.
 
 # ¿Cuál modelo se ajusta mejor?

@@ -18,18 +18,17 @@ knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
 
 # Objetivos de aprendizaje
 
-En esta actividad construiremos curvas concentración-respuesta para explorar la asociación entre las columnas troposféricas de NO₂ observadas por TEMPO y las visitas a urgencias por enfermedades respiratorias. 
+En esta actividad estimaremos la asociación entre las columnas troposféricas de NO₂ observadas por TEMPO y visitas a urgencias por enfermedades respiratorias en la Megalópolis, mediante un diseño de casos cruzados estratificado en el tiempo (time-stratified case-crossover).
 
-Al finalizar, podremos:.
+Al finalizar, podremos:
 
-(1) Evaluar el ajuste de una función lineal y una no lineal modelada con *splines* naturales 
+(1) Evaluar y comparar el ajuste de modelos lineales y no lineales para identificar el que mejor describe la asociación 
 (2) Representar gráficamente ambas funciones
 (3) Interpretar la incertidumbre de las curvas 
 
 # Preparación
-
-Este documento supone que el objeto `er_cco_no2_CF1` ya está cargado en la sesión de R. 
-Debe contener, como mínimo, las variables `id`, `caseday`, `broad_category`, `age_cat`, `specific_category` y `satellite.no2_9AM`.
+Este ejercicio utiliza la base de datos `er_cco_no2_CF1`, previamente cargado en R.
+Las librerias a utilizar son las siguientes:
 
 ```{r packages}
 library(data.table)
@@ -53,14 +52,15 @@ stopifnot(all(required_cols %in% names(er_cco_no2_CF1)))
 
 ```
 
-# ¿Cómo construimos una curva concentración-respuesta?
+# ¿Cómo construimos una curva exposición-respuesta a partir de una medida de asociación?
 
-Para una concentración $x$ y una concentración de comparación o de "partida" $x_0$, el OR relativo se expresa como:
+Para una concentración o nivel de exposición $x$ y una concentración o nivel de exposición base o de "partida" $x_0$, el OR relativo se expresa como:
 
 $$OR(x, x_0)=\exp\{f(x)-f(x_0)\}.$$
 
 En el modelo lineal, 
 $$f(x)=\beta x$$ 
+
 
 en el modelo con *splines* naturales, 
 $$f(x)$$
@@ -76,8 +76,6 @@ $$x_0$$
 
 es decir; **ese punto no es un umbral de seguridad ni indica ausencia de efectos sobre la salud**.
 
-La función permite elegir el percentil 5 (`ref = "p5"`) o la mediana (`ref = "median"`) como concentración de comparación o "partida". También limita el rango graficado mediante los percentiles 1 y 99, sin excluir esas observaciones del ajuste estadístico.
-
 # Función para ajustar modelos y graficar
 
 La siguiente función realiza lo siguiente:
@@ -85,6 +83,8 @@ La siguiente función realiza lo siguiente:
 (1) Ajusta los modelos 
 (2) Calcula los OR relativos (con incrementos relativos al punto de partida) y sus intervalos de confianza puntuales del 95 %, 
 (3) Devuelve tanto la función de forma gráfica como la salida del modelo y los datos de predicción.
+
+La función permite elegir el percentil 5 (`ref = "p5"`) o la mediana (`ref = "median"`) como nivel de comparación o "partida". También limita el rango graficado mediante los percentiles 1 y 99, sin excluir esas observaciones del ajuste estadístico.
 
 
 ```{r define-function}
@@ -251,6 +251,8 @@ Repetimos el mismo procedimiento para otro diagnóstico y grupo de edad. Observa
 asthma_linear <- plot_cco_cr(er_cco_no2_CF1,
                              age = "elderly", outcome = "Asthma (J45)",
                              model = "linear")
+
+
 asthma_spline <- plot_cco_cr(er_cco_no2_CF1,
                              age = "elderly", outcome = "Asthma (J45)",
                              model = "spline", df = 3)
@@ -280,6 +282,8 @@ uri_linear <- plot_cco_cr(er_cco_no2_CF1,
                           age = "children",
                           outcome = "Acute upper respiratory infections (J00–J06)",
                           model = "linear")
+
+
 uri_spline <- plot_cco_cr(er_cco_no2_CF1,
                           age = "children",
                           outcome = "Acute upper respiratory infections (J00–J06)",
